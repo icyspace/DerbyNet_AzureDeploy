@@ -1,0 +1,274 @@
+  {
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+      "storageAccountName1": {
+        "type": "string",
+        "defaultValue": "derby",
+        "metadata": {
+          "description": "Name of the first storage account."
+        }
+      },
+      "storageAccountName2": {
+        "type": "string",
+        "defaultValue": "pack",
+        "metadata": {
+          "description": "Name of the second storage account."
+        }
+      },
+      "dnsNameLabel": {
+        "type": "string",
+        "defaultValue": "derbystp",
+        "metadata": {
+          "description": "DNS label for the container group. Must be unique."
+        }
+      },
+      "email": {
+        "type": "string",
+        "metadata": {
+          "description": "Email address for Let's Encrypt SSL registration."
+        }
+      },
+      "dockerUsername": {
+        "type": "string",
+        "metadata": {
+          "description": "Username for Docker registry authentication."
+        }
+      },
+      "dockerPassword": {
+        "type": "securestring",
+        "metadata": {
+          "description": "Password for Docker registry authentication."
+        }
+      }
+    },
+    "resources": [
+      {
+        "type": "Microsoft.Storage/storageAccounts",
+        "apiVersion": "2022-09-01",
+        "name": "[parameters('storageAccountName1')]",
+        "location": "[resourceGroup().location]",
+        "sku": {
+          "name": "Standard_LRS"
+        },
+        "kind": "StorageV2",
+        "properties": {}
+      },
+      {
+        "type": "Microsoft.Storage/storageAccounts",
+        "apiVersion": "2022-09-01",
+        "name": "[parameters('storageAccountName2')]",
+        "location": "[resourceGroup().location]",
+        "sku": {
+          "name": "Standard_LRS"
+        },
+        "kind": "StorageV2",
+        "properties": {}
+      },
+      {
+        "type": "Microsoft.Storage/storageAccounts/fileServices/shares",
+        "apiVersion": "2022-09-01",
+        "name": "[concat(parameters('storageAccountName1'), '/default/proxy-caddyfile')]",
+        "dependsOn": [
+          "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName1'))]"
+        ]
+      },
+      {
+        "type": "Microsoft.Storage/storageAccounts/fileServices/shares",
+        "apiVersion": "2022-09-01",
+        "name": "[concat(parameters('storageAccountName1'), '/default/proxy-config')]",
+        "dependsOn": [
+          "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName1'))]"
+        ]
+      },
+      {
+        "type": "Microsoft.Storage/storageAccounts/fileServices/shares",
+        "apiVersion": "2022-09-01",
+        "name": "[concat(parameters('storageAccountName1'), '/default/proxy-data')]",
+        "dependsOn": [
+          "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName1'))]"
+        ]
+      },
+      {
+        "type": "Microsoft.Storage/storageAccounts/fileServices/shares",
+        "apiVersion": "2022-09-01",
+        "name": "[concat(parameters('storageAccountName2'), '/default/derby')]",
+        "dependsOn": [
+          "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName2'))]"
+        ]
+      },
+      {
+        "type": "Microsoft.ContainerInstance/containerGroups",
+        "apiVersion": "2021-10-01",
+        "name": "[parameters('dnsNameLabel')]",
+        "location": "[resourceGroup().location]",
+        "properties": {
+          "osType": "Linux",
+          "ipAddress": {
+            "type": "Public",
+            "dnsNameLabel": "[parameters('dnsNameLabel')]",
+            "ports": [
+              {
+                "protocol": "TCP",
+                "port": 80
+              },
+              {
+                "protocol": "TCP",
+                "port": 443
+              }
+            ]
+          },
+          "imageRegistryCredentials": [
+            {
+              "server": "index.docker.io",
+              "username": "[parameters('dockerUsername')]",
+              "password": "[parameters('dockerPassword')]"
+            }
+          ],
+          "containers": [
+            {
+              "name": "reverse-proxy",
+              "properties": {
+                "image": "caddy:2.6",
+                "resources": {
+                  "requests": {
+                    "memoryInGB": 1.0,
+                    "cpu": 1.0
+                  },
+                  "limits": {
+                    "memoryInGB": 1.0,
+                    "cpu": 1.0
+                  }
+                },
+                "ports": [
+                  {
+                    "protocol": "TCP",
+                    "port": 80
+                  },
+                  {
+                    "protocol": "TCP",
+                    "port": 443
+                  }
+                ],
+                "volumeMounts": [
+                  {
+                    "name": "proxy-caddyfile",
+                    "mountPath": "/etc/caddy"
+                  },
+                  {
+                    "name": "proxy-data",
+                    "mountPath": "/data"
+                  },
+                  {
+                    "name": "proxy-config",
+                    "mountPath": "/config"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "derbynet",
+              "properties": {
+                "image": "icyspace/derbynet-9010",
+                "resources": {
+                  "requests": {
+                    "memoryInGB": 2.0,
+                    "cpu": 2.0
+                  },
+                  "limits": {
+                    "memoryInGB": 2.0,
+                    "cpu": 2.0
+                  }
+                },
+                "ports": [
+                  {
+                    "protocol": "TCP",
+                    "port": 5000
+                  }
+                ],
+                "volumeMounts": [
+                  {
+                    "name": "aci",
+                    "mountPath": "/aci/derby/"
+                  }
+                ]
+              }
+            }
+          ],
+          "volumes": [
+            {
+              "name": "proxy-caddyfile",
+              "azureFile": {
+                "shareName": "proxy-caddyfile",
+                "storageAccountName": "[parameters('storageAccountName1')]",
+                "storageAccountKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName1')), '2022-09-01').keys[0].value]"
+              }
+            },
+            {
+              "name": "proxy-config",
+              "azureFile": {
+                "shareName": "proxy-config",
+                "storageAccountName": "[parameters('storageAccountName1')]",
+                "storageAccountKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName1')), '2022-09-01').keys[0].value]"
+              }
+            },
+            {
+              "name": "proxy-data",
+              "azureFile": {
+                "shareName": "proxy-data",
+                "storageAccountName": "[parameters('storageAccountName1')]",
+                "storageAccountKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName1')), '2022-09-01').keys[0].value]"
+              }
+            },
+            {
+              "name": "aci",
+              "azureFile": {
+                "shareName": "derby",
+                "storageAccountName": "[parameters('storageAccountName2')]",
+                "storageAccountKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName2')), '2022-09-01').keys[0].value]"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "type": "Microsoft.Resources/deploymentScripts",
+        "apiVersion": "2020-10-01",
+        "name": "uploadCaddyfile",
+        "location": "[resourceGroup().location]",
+        "kind": "AzureCLI",
+        "dependsOn": [
+          "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName1'))]",
+          "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', parameters('storageAccountName1'), 'default', 'proxy-caddyfile')]"
+        ],
+        "properties": {
+          "azCliVersion": "2.0.80",
+          "retentionInterval": "PT12H",
+          "scriptContent": "#!/bin/bash\necho 'Generating Caddyfile...'\ncat <<EOF > Caddyfile\n{\n  email $EMAIL\n  acme_ca https://acme-v02.api.letsencrypt.org/directory\n}\n$DNS_NAME.centralus.azurecontainer.io {\n  reverse_proxy http://localhost:5000\n}\nEOF\necho 'Showing contents of Caddyfile:'\ncat Caddyfile\necho 'Uploading Caddyfile...'\naz storage file upload --account-name $STORAGE_ACCOUNT --account-key $STORAGE_KEY --share-name proxy-caddyfile --source Caddyfile ",
+          "timeout": "PT30M",
+          "cleanupPreference": "OnSuccess",
+          "environmentVariables": [
+            {
+              "name": "STORAGE_ACCOUNT",
+              "value": "[parameters('storageAccountName1')]"
+            },
+            {
+              "name": "STORAGE_KEY",
+              "value": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName1')), '2022-09-01').keys[0].value]"
+            },
+            {
+              "name": "DNS_NAME",
+              "value": "[parameters('dnsNameLabel')]"
+            },
+            {
+              "name": "EMAIL",
+              "value": "[parameters('email')]"
+            }
+          ],
+          "authentication": {
+            "type": "user"
+          }
+        }
+      }
+    ]
+  }
